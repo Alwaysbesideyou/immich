@@ -41,6 +41,7 @@
     ActionButton,
     CommandPaletteDefaultProvider,
     ContextMenuButton,
+    Text,
     LoadingSpinner,
     modalManager,
     toastManager,
@@ -54,6 +55,7 @@
   import EditNameInput from './EditNameInput.svelte';
   import MergeFaceSelector from './MergeFaceSelector.svelte';
   import UnmergeFaceSelector from './UnmergeFaceSelector.svelte';
+  import SharedPersonEditModal from '$lib/modals/SharedPersonEditModal.svelte';
 
   interface Props {
     data: PageData;
@@ -63,6 +65,7 @@
 
   let numberOfAssets = $derived(data.statistics.assets);
   let person = $derived(data.person);
+  const altNames = $derived(person.otherPeople?.map(({ name }) => name).filter((name) => name) ?? []);
   let thumbnailData = $derived(getPeopleThumbnailUrl(person));
 
   let timelineManager = $state<TimelineManager>() as TimelineManager;
@@ -373,44 +376,58 @@
                 {thumbnailData}
               />
             {:else}
-              <div class="relative">
-                <button
-                  type="button"
-                  class="flex items-center justify-center"
-                  title={$t('edit_name')}
-                  onclick={() => (isEditingName = true)}
-                >
-                  <ImageThumbnail
-                    circle
-                    shadow
-                    url={thumbnailData}
-                    altText={person.name}
-                    widthStyle="3.375rem"
-                    heightStyle="3.375rem"
-                  />
-                  <div class="flex flex-col justify-center px-4 text-start text-primary">
-                    <p class="w-40 truncate font-medium sm:w-72">{person.name || $t('add_a_name')}</p>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                      {$t('assets_count', { values: { count: numberOfAssets } })}
+              <div class="relative flex gap-4">
+                <ImageThumbnail
+                  circle
+                  shadow
+                  url={thumbnailData}
+                  altText={person.name}
+                  widthStyle="3.375rem"
+                  heightStyle="3.375rem"
+                />
+                <div class="flex flex-col text-start text-primary">
+                  <button type="button" title={$t('edit_name')} onclick={() => (isEditingName = true)}>
+                    <p class="w-max-40 truncate font-medium sm:w-max-72 text-start">
+                      {person.name || $t('add_a_name')}
                     </p>
-                    {#if person.birthDate}
-                      <p class="text-sm text-gray-500 dark:text-gray-400">
-                        {$t('person_birthdate', {
-                          values: {
-                            date: DateTime.fromISO(person.birthDate).toLocaleString(
-                              {
-                                month: 'numeric',
-                                day: 'numeric',
-                                year: 'numeric',
-                              },
-                              { locale: $locale },
-                            ),
-                          },
-                        })}
-                      </p>
-                    {/if}
-                  </div>
-                </button>
+                  </button>
+                  {#if altNames.length > 0}
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      aka {#each altNames.slice(0, -1) as altName, index}
+                        <button
+                          onclick={() => modalManager.show(SharedPersonEditModal, { person, otherPeopleIndex: index })}
+                          class="underline">{` ${altName}`}</button
+                        >
+                        {altNames.length > 2 ? ',' : ''}
+                      {/each}
+                      and
+                      <button
+                        onclick={() =>
+                          modalManager.show(SharedPersonEditModal, { person, otherPeopleIndex: altNames.length - 1 })}
+                        class="underline">{altNames.at(-1)}</button
+                      >
+                    </p>
+                  {/if}
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {$t('assets_count', { values: { count: numberOfAssets } })}
+                  </p>
+                  {#if person.birthDate}
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {$t('person_birthdate', {
+                        values: {
+                          date: DateTime.fromISO(person.birthDate).toLocaleString(
+                            {
+                              month: 'numeric',
+                              day: 'numeric',
+                              year: 'numeric',
+                            },
+                            { locale: $locale },
+                          ),
+                        },
+                      })}
+                    </p>
+                  {/if}
+                </div>
               </div>
             {/if}
           </section>

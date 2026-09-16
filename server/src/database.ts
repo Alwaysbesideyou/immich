@@ -253,6 +253,7 @@ export type Person = {
   faceAssetId: string | null;
   isHidden: boolean;
   thumbnailPath: string;
+  otherPeople?: { ownerId: string; name: string; birthDate: string | null }[];
 };
 
 export type AssetFace = {

@@ -1229,6 +1229,11 @@ export type PersonResponseDto = {
     isHidden: boolean;
     /** Person name */
     name: string;
+    otherPeople?: {
+        birthDate: string | null;
+        name: string;
+        ownerId: string;
+    }[];
     /** Thumbnail path */
     thumbnailPath: string;
     /** Last update date */

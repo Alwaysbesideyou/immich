@@ -89,7 +89,27 @@ limit
 
 -- PersonRepository.getAllForUser
 select
-  "person".*
+  "person".*,
+  (
+    select
+      coalesce(json_agg(agg), '[]')
+    from
+      (
+        select
+          "otherPeople"."ownerId",
+          "otherPeople"."name",
+          "otherPeople"."birthDate"
+        from
+          "person" as "otherPeople"
+        where
+          "otherPeople"."ownerId" != $1
+          and (
+            "otherPeople"."birthDate" is not null
+            or "otherPeople"."name" != $2
+          )
+          and "otherPeople"."personGroupId" = "person"."personGroupId"
+      ) as agg
+  ) as "otherPeople"
 from
   "person"
   inner join "asset_face" on "asset_face"."personGroupId" = "person"."personGroupId"
@@ -98,16 +118,16 @@ from
   and "asset"."visibility" = 'timeline'
   and "asset"."deletedAt" is null
 where
-  "person"."ownerId" = $1
+  "person"."ownerId" = $3
   and "asset_face"."deletedAt" is null
   and "asset_face"."isVisible" is true
-  and "person"."isHidden" = $2
+  and "person"."isHidden" = $4
 group by
   "person"."ownerId",
   "person"."personGroupId"
 having
   (
-    "person"."name" != $3
+    "person"."name" != $5
     or count("asset_face"."assetId") >= COALESCE(
       (
         SELECT
@@ -115,7 +135,7 @@ having
         FROM
           user_metadata
         WHERE
-          "userId" = $4
+          "userId" = $6
           AND key = 'preferences'
       ),
       '3'
@@ -129,9 +149,9 @@ order by
   NULLIF(person.name, '') asc nulls last,
   "person"."createdAt"
 limit
-  $5
+  $7
 offset
-  $6
+  $8
 
 -- PersonRepository.getAllWithoutFaces
 select
@@ -281,13 +301,36 @@ where
   "asset_face"."id" = $2
 
 -- PersonRepository.getByGroupId
+with
+  "person" as (
+    select
+      *
+    from
+      "person"
+    where
+      "person"."personGroupId" = $1
+    order by
+      "person"."ownerId" = $2 desc
+  )
 select
-  "person".*
+  "person".*,
+  (
+    select
+      coalesce(json_agg(agg), '[]')
+    from
+      (
+        select
+          "ownerId",
+          "name",
+          "birthDate"
+        from
+          "person"
+        offset
+          $3
+      ) as agg
+  ) as "otherPeople"
 from
   "person"
-where
-  "person"."personGroupId" = $1
-  and "person"."ownerId" = $2
 
 -- PersonRepository.getByName
 with

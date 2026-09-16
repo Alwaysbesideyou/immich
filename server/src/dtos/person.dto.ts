@@ -83,6 +83,12 @@ export const PersonResponseSchema = z
       .optional()
       .describe('Person color (hex)')
       .meta(new HistoryBuilder().added('v1.126.0').stable('v2').getExtensions()),
+    // TODO should probably be replaced by a permissions array
+    // isShared: z.boolean(),
+    // TODO should maybe be a `z.array(BasePersonSchema)`?
+    otherPeople: z
+      .array(z.object({ ownerId: z.uuid(), name: z.string(), birthDate: z.string().nullable() }))
+      .optional(),
   })
   .meta({ id: 'PersonResponseDto' });
 
@@ -181,6 +187,7 @@ export function mapPerson(person: MaybeDehydrated<Person>): PersonResponseDto {
     isFavorite: person.isFavorite,
     color: person.color ?? undefined,
     updatedAt: asDateTimeString(person.updatedAt),
+    otherPeople: person.otherPeople,
   };
 }
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { type ExpressionBuilder, type Insertable, type Kysely, type Updateable, sql } from 'kysely';
-import { jsonObjectFrom } from 'kysely/helpers/postgres';
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { InjectKysely } from 'nestjs-kysely';
 import { AssetFace } from 'src/database.js';
 import { Chunked, ChunkedArray, DummyValue, GenerateSql } from 'src/decorators.js';
@@ -242,6 +242,38 @@ export class PersonRepository {
           .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
           .on('asset.deletedAt', 'is', null),
       )
+      // .union((eb) =>
+      //   eb.parens(
+      //     eb
+      //       .selectFrom('person')
+      //       .where('person.ownerId', '!=', userId)
+      //       .select((eb) => [
+      //         'person.personGroupId',
+      //         eb.lit(null).as('birthDate'),
+      //         eb.lit(null).as('color'),
+      //         'person.createdAt',
+      //         eb.lit(null).as('faceAssetId'),
+      //         eb.lit(false).as('isFavorite'),
+      //         eb.lit(false).as('isHidden'),
+      //         sql.lit('').as('name'),
+      //         'person.ownerId',
+      //         sql.lit('').as('thumbnailPath'),
+      //         'person.updateId',
+      //         'person.updatedAt',
+      //         sql.lit([]).as('otherPeople'),
+      //       ]),
+      //   ),
+      // )
+      .select((eb) =>
+        jsonArrayFrom(
+          eb
+            .selectFrom('person as otherPeople')
+            .select(['otherPeople.ownerId', 'otherPeople.name', 'otherPeople.birthDate'])
+            .where('otherPeople.ownerId', '!=', userId)
+            .where((eb) => eb.or([eb('otherPeople.birthDate', 'is not', null), eb('otherPeople.name', '!=', '')]))
+            .whereRef('otherPeople.personGroupId', '=', 'person.personGroupId'),
+        ).as('otherPeople'),
+      )
       .where('person.ownerId', '=', userId)
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)
@@ -395,11 +427,19 @@ export class PersonRepository {
 
   @GenerateSql({ params: [{ ownerId: DummyValue.UUID, personGroupId: DummyValue.UUID }] })
   getByGroupId({ ownerId, personGroupId }: PersonId) {
-    return this.db //
+    return this.db
+      .with('person', (qb) =>
+        qb
+          .selectFrom('person')
+          .selectAll()
+          .where('person.personGroupId', '=', personGroupId)
+          .orderBy((eb) => eb('person.ownerId', '=', ownerId), 'desc'),
+      )
       .selectFrom('person')
       .selectAll('person')
-      .where('person.personGroupId', '=', personGroupId)
-      .where('person.ownerId', '=', ownerId)
+      .select((eb) =>
+        jsonArrayFrom(eb.selectFrom('person').offset(1).select(['ownerId', 'name', 'birthDate'])).as('otherPeople'),
+      )
       .executeTakeFirst();
   }
 
