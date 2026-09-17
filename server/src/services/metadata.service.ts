@@ -991,7 +991,7 @@ export class MetadataService extends BaseService {
     }
   }
 
-    private getDates(
+  private getDates(
     asset: { id: string; originalPath: string; fileCreatedAt: Date },
     exifTags: ImmichTags,
     stats: Stats,
