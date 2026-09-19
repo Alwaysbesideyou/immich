@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       imageTag:
-        description: "Immutable GHCR tag, e.g. v3.2.2-tz.1"
+        description: "Immutable GHCR tag, e.g. v3.2.2-tz"
         required: true
-        default: "v3.2.2-tz.1"
+        default: "v3.2.2-tz"
         type: string
 
 permissions: {}
@@ -29,8 +29,8 @@ jobs:
           IMAGE_TAG: ${{ inputs.imageTag }}
         run: |
           set -euo pipefail
-          if [[ ! "${IMAGE_TAG}" =~ ^v3\.2\.2-tz\.[1-9][0-9]*$ ]]; then
-            echo "imageTag must match v3.2.2-tz.N" >&2
+          if [[ ! "${IMAGE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-tz$ ]]; then
+            echo "imageTag must match vX.Y.Z-tz, for example v3.2.2-tz" >&2
             exit 1
           fi
 
@@ -39,14 +39,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Assert the v3.2.2 source and patch scope
+      - name: Assert source version matches image tag
+        env:
+          IMAGE_TAG: ${{ inputs.imageTag }}
         run: |
           set -euo pipefail
-          test "$(node -p "require('./server/package.json').version")" = "3.2.2"
+          sourceVersion="$(node -p "require('./server/package.json').version")"
+          imageVersion="${IMAGE_TAG%-tz}"
+          imageVersion="${imageVersion#v}"
+          test "${sourceVersion}" = "${imageVersion}"
 
+      - name: Assert the timezone patch scope
+        run: |
+          set -euo pipefail
           changedServerFiles="$(git diff --name-only v3.2.2...HEAD -- server)"
           test "${changedServerFiles}" = "server/src/services/metadata.service.ts"
-
           git diff --check v3.2.2...HEAD -- server/src/services/metadata.service.ts
 
       - name: Set up Docker Buildx
