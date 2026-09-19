@@ -61,7 +61,7 @@ jobs:
 
       - name: Reject an existing image tag
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/immich-server
+          IMAGE: ghcr.io/alwaysbesideyou/immich-server
           IMAGE_TAG: ${{ inputs.imageTag }}
         run: |
           set -euo pipefail
@@ -79,10 +79,10 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
-          tags: ghcr.io/${{ github.repository_owner }}/immich-server:${{ inputs.imageTag }}
+          tags: ghcr.io/alwaysbesideyou/immich-server:${{ inputs.imageTag }}
           build-args: |
             BUILD_ID=${{ github.run_id }}
-            BUILD_IMAGE=ghcr.io/${{ github.repository_owner }}/immich-server:${{ inputs.imageTag }}
+            BUILD_IMAGE=ghcr.io/alwaysbesideyou/immich-server:${{ inputs.imageTag }}
             BUILD_SOURCE_REF=${{ github.ref_name }}
             BUILD_SOURCE_COMMIT=${{ github.sha }}
           cache-from: type=gha
@@ -90,4 +90,4 @@ jobs:
 
       - name: Report immutable deployment reference
         run: |
-          echo "Published: ghcr.io/${{ github.repository_owner }}/immich-server:${{ inputs.imageTag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published: ghcr.io/alwaysbesideyou/immich-server:${{ inputs.imageTag }}" >> "$GITHUB_STEP_SUMMARY"
