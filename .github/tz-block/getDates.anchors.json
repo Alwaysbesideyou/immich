@@ -1,0 +1,8 @@
+{
+  "file": "server/src/services/metadata.service.ts",
+  "startAnchor": "\n  private getDates(",
+  "endAnchor": "\n\n  private hasGeo(",
+  "startAnchorDescription": "newline + two-space indent + getDates declaration",
+  "endAnchorDescription": "blank line before the next private method hasGeo(",
+  "regenerating": "If upstream moves these, regenerate the block from the fork and update both fields."
+}
