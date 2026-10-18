@@ -1,0 +1,222 @@
+name: Build custom Immich server image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immich release tag, e.g. v3.3.3"
+        required: true
+        default: "v3.3.3"
+        type: string
+  schedule:
+    # Every Monday 18:05 UTC = Tuesday 02:05 Asia/Shanghai.
+    # Immich ships on a roughly weekly cadence, so polling more often only
+    # burns Actions minutes without buying anything.
+    - cron: '5 18 * * 1'
+
+permissions: {}
+
+concurrency:
+  # One build per target version; a scheduled run never cancels a manual one.
+  group: custom-server-image-${{ inputs.version || 'scheduled' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish immich-server
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Resolve target version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION}" ]; then
+            version="${INPUT_VERSION}"
+          else
+            # /releases/latest never returns a prerelease or a draft.
+            version="$(curl -fsSL https://api.github.com/repos/immich-app/immich/releases/latest | jq -r .tag_name)"
+          fi
+
+          # A stray non-semver tag would break the GHCR tag scheme, so stop early.
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Resolved version '${version}' is not vX.Y.Z; refusing to build." >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Target: ${version}"
+
+      # The patch data lives on tz-maintenance, which the upstream sync never
+      # touches because it is not the default branch. The workflow file itself
+      # sits on the default branch, since GitHub only reads workflow
+      # definitions from there.
+      - name: Check out maintenance branch
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
+        with:
+          fetch-depth: 0
+          ref: tz-maintenance
+
+      - name: Fetch upstream release tag
+        env:
+          TARGET_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The fork's `main` is kept in sync by the GitHub pull app, but release
+          # tags are not synced, so fetch the tag directly.
+          git remote add upstream https://github.com/immich-app/immich.git
+          git fetch --no-tags --depth 1 upstream \
+            "refs/tags/${TARGET_VERSION}:refs/tags/${TARGET_VERSION}"
+
+      - name: Materialize upstream source at tag
+        env:
+          TARGET_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Build from a clean checkout of the upstream tree so no leftover fork
+          # commits can leak into the image.
+          git read-tree "refs/tags/${TARGET_VERSION}"
+          git checkout-index -a -f
+
+          sourceVersion="$(node -p "require('./server/package.json').version")"
+          expected="${TARGET_VERSION#v}"
+          if [ "${sourceVersion}" != "${expected}" ]; then
+            echo "server/package.json is ${sourceVersion}, expected ${expected}" >&2
+            exit 1
+          fi
+
+      - name: Apply timezone block
+        id: patch
+        run: bash .github/scripts/apply-tz-block.sh
+
+      - name: Report patch failure
+        if: steps.patch.outcome == 'failure'
+        env:
+          TARGET_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          {
+            echo "### Timezone block could not be applied to ${TARGET_VERSION}"
+            echo
+            echo "Upstream changed the surrounding code. Do not hand-edit the"
+            echo "image; regenerate the block from the fork and re-verify."
+            echo
+            echo "Current upstream implementation of getDates():"
+            echo '```ts'
+            sed -n '/private getDates(/,/^  private hasGeo(/p' \
+              server/src/services/metadata.service.ts | head -n 140 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Assert patched source is the only change
+        env:
+          TARGET_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "refs/tags/${TARGET_VERSION}" --)"
+          if [ "${changed}" != "server/src/services/metadata.service.ts" ]; then
+            echo "Unexpected diff against upstream ${TARGET_VERSION}:" >&2
+            printf '%s\n' "${changed}" >&2
+            exit 1
+          fi
+
+          git diff --check "refs/tags/${TARGET_VERSION}" -- \
+            server/src/services/metadata.service.ts
+
+          # The patched expression must be present, otherwise a bad splice would
+          # ship an image that silently reverts the fix.
+          grep -q 'UTC\${dateTimeOriginal.toFormat(.ZZ.)}' \
+            server/src/services/metadata.service.ts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if image already published
+        id: exists
+        env:
+          IMAGE: ghcr.io/alwaysbesideyou/immich-server
+          IMAGE_TAG: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "${IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "::notice::${IMAGE}:${IMAGE_TAG} already exists; nothing to do"
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish
+        if: steps.exists.outputs.already != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/alwaysbesideyou/immich-server:${{ steps.ver.outputs.version }}
+          build-args: |
+            BUILD_ID=${{ github.run_id }}
+            BUILD_IMAGE=ghcr.io/alwaysbesideyou/immich-server:${{ steps.ver.outputs.version }}
+            BUILD_SOURCE_REF=${{ steps.ver.outputs.version }}
+            BUILD_SOURCE_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # GHCR free tier caps a package at 500 MB. An Immich server image is
+      # several hundred MB, so only two versions fit. Keeping the two newest
+      # also matches the rollback need: one version back, one current.
+      - name: Prune old package versions
+        if: steps.exists.outputs.already != 'true'
+        env:
+          IMAGE: ghcr.io/alwaysbesideyou/immich-server
+          CURRENT_TAG: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          versions="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/user/packages/container/immich-server/versions?per_page=100" \
+            | jq -r 'sort_by(.created_at) | reverse | .[].id')"
+
+          kept=0
+          for id in ${versions}; do
+            kept=$((kept + 1))
+            if [ "${kept}" -gt 2 ]; then
+              echo "Pruning old package version id ${id}"
+              curl -fsSL -X DELETE \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/user/packages/container/immich-server/versions/${id}" \
+                || echo "::warning::failed to prune version id ${id}"
+            fi
+          done
+
+      - name: Report deployed image reference
+        env:
+          IMAGE: ghcr.io/alwaysbesideyou/immich-server
+          IMAGE_TAG: ${{ steps.ver.outputs.version }}
+        run: |
+          {
+            echo "Image: ${IMAGE}:${IMAGE_TAG}"
+            echo
+            echo "Upgrade on the server:"
+            echo '```bash'
+            echo "cd /home/sudie/immich"
+            echo "sed -i 's#^IMMICH_VERSION=.*#IMMICH_VERSION=${IMAGE_TAG}#' .env"
+            echo "docker compose pull immich-server immich-machine-learning"
+            echo "docker compose up -d immich-server immich-machine-learning"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
