@@ -83,6 +83,20 @@ jobs:
           TARGET_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
+          # Overlaying the upstream tree never deletes files that exist only on
+          # tz-maintenance. A stale web/svelte.config.js makes SvelteKit 3 fail
+          # with config_file_unsupported, so drop every fork-only tracked file
+          # first. .github/ is kept on purpose: the timezone patch script and
+          # block live there and are absent from upstream.
+          git ls-files | LC_ALL=C sort > /tmp/fork-files.txt
+          git ls-tree -r --name-only "refs/tags/${TARGET_VERSION}" | LC_ALL=C sort > /tmp/tag-files.txt
+          comm -23 /tmp/fork-files.txt /tmp/tag-files.txt | grep -v "^\.github/" > /tmp/stale-files.txt || true
+          if [ -s /tmp/stale-files.txt ]; then
+            echo "Dropping fork-only files not present at ${TARGET_VERSION}:"
+            sed "s/^/  /" /tmp/stale-files.txt
+            while IFS= read -r f; do rm -f -- "$f"; done < /tmp/stale-files.txt
+          fi
+
           # Build from a clean checkout of the upstream tree so no leftover fork
           # commits can leak into the image.
           git read-tree "refs/tags/${TARGET_VERSION}"
